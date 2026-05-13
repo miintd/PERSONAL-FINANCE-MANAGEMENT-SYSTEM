@@ -7,6 +7,7 @@ from matplotlib.figure import Figure
 from datetime import date, datetime
 import csv, os
 from database import Database
+import income_expense as ie
 
 # ── Color scheme ──────────────────────────────────────────
 BG       = "#F0F4F8"
@@ -386,11 +387,7 @@ class MainApp:
         self.root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
 
     def _check_bank_accounts(self):
-        db = Database()
-        accounts = db.fetchall(
-            "SELECT AccountID FROM BANKACCOUNTS WHERE UserID=%s",
-            (self.user_id,))
-        db.close()
+        accounts = ie.get_user_accounts(self.user_id)
         if not accounts:
             SetupBankWindow(self.root, self.user,
                             on_done=self.show_dashboard)
@@ -476,12 +473,7 @@ class MainApp:
         return f
 
     def _get_accounts(self):
-        db = Database()
-        rows = db.fetchall(
-            "SELECT AccountID, BankName, Balance FROM BANKACCOUNTS "
-            "WHERE UserID=%s ORDER BY AccountID", (self.user_id,))
-        db.close()
-        return rows
+        return ie.get_user_accounts(self.user_id)
 
     # ── DASHBOARD ────────────────────────────────────────────────
     def show_dashboard(self, month=None, year=None):
@@ -521,25 +513,14 @@ class MainApp:
         view_btn.pack(side="left", padx=10)
 
         # --- Lấy dữ liệu từ DB ---
-        db = Database()
         m, y = month, year
 
-        income = float(db.fetchone(
-            "SELECT IFNULL(SUM(Amount),0) AS v FROM INCOME "
-            "WHERE UserID=%s AND MONTH(IncomeDate)=%s AND YEAR(IncomeDate)=%s",
-            (self.user_id, m, y))["v"] or 0)
-        expense = float(db.fetchone(
-            "SELECT IFNULL(SUM(Amount),0) AS v FROM EXPENSES "
-            "WHERE UserID=%s AND MONTH(ExpenseDate)=%s AND YEAR(ExpenseDate)=%s",
-            (self.user_id, m, y))["v"] or 0)
-
-        balance_now = float(db.fetchone(
-            "SELECT IFNULL(SUM(Balance),0) AS v FROM BANKACCOUNTS "
-            "WHERE UserID=%s", (self.user_id,))["v"] or 0)
+        income = ie.get_monthly_income_sum(self.user_id, m, y)
+        expense = ie.get_monthly_expense_sum(self.user_id, m, y)
+        balance_now = ie.get_total_balance(self.user_id)
 
         # Số dư đầu tháng = số dư hiện tại - thu nhập tháng này + chi tiêu tháng này
         balance_start = balance_now - income + expense
-        db.close()
 
         savings = income - expense
 
@@ -609,19 +590,11 @@ class MainApp:
                 y -= 1
             months_data.append((y, m))
 
-        db = Database()
         inc_exp = []
         for y, m in months_data:
-            inc = db.fetchone(
-                "SELECT IFNULL(SUM(Amount),0) AS s FROM INCOME "
-                "WHERE UserID=%s AND YEAR(IncomeDate)=%s AND MONTH(IncomeDate)=%s",
-                (self.user_id, y, m))["s"]
-            exp = db.fetchone(
-                "SELECT IFNULL(SUM(Amount),0) AS s FROM EXPENSES "
-                "WHERE UserID=%s AND YEAR(ExpenseDate)=%s AND MONTH(ExpenseDate)=%s",
-                (self.user_id, y, m))["s"]
+            inc = ie.get_monthly_income_sum(self.user_id, m, y)
+            exp = ie.get_monthly_expense_sum(self.user_id, m, y)
             inc_exp.append((inc, exp))
-        db.close()
 
         # Tạo figure mới
         fig = Figure(figsize=(8, 2.8), dpi=100, facecolor=BG)
@@ -734,13 +707,7 @@ class MainApp:
 
         tree.heading("No.", text="No.") 
 
-        db = Database()
-        rows = db.fetchall(
-            "SELECT i.IncomeID, b.BankName, i.Amount, i.IncomeDate, i.Description "
-            "FROM INCOME i JOIN BANKACCOUNTS b ON i.AccountID = b.AccountID "
-            "WHERE i.UserID=%s ORDER BY i.IncomeDate DESC",
-            (self.user_id,))
-        db.close()
+        rows = ie.get_all_income(self.user_id)
 
         for idx, r in enumerate(rows, start=1):
             tree.insert("", "end", values=(
@@ -766,22 +733,15 @@ class MainApp:
             desc = self.inc_desc.get().strip() or ""
             datetime.strptime(date_str, "%Y-%m-%d")
 
-            db = Database()
-            result = db.call_procedure("sp_add_income",
-                (self.user_id, account_id, amount, date_str, desc))
-            db.close()
+            success, msg = ie.add_income(self.user_id, account_id, amount, desc, date_str)
 
-            if result and "Error" in str(result[0]):
-                messagebox.showerror("Error", str(result[0]))
+            if not success:
+                messagebox.showerror("Error", msg)
             else:
-                db2 = Database()
-                new_bal = db2.fetchone(
-                    "SELECT Balance FROM BANKACCOUNTS WHERE AccountID=%s",
-                    (account_id,))["Balance"]
-                db2.close()
+                new_bal = ie.get_account_balance(account_id)
                 messagebox.showinfo(
                     "Success",
-                    f"✅ Added income: {amount:,.0f} VND\nNew balance: {float(new_bal):,.0f} VND"
+                    f"✅ Added income: {amount:,.0f} VND\nNew balance: {new_bal:,.0f} VND"
                 )
                 self.inc_amount.delete(0, "end")
                 self.inc_desc.delete(0, "end")
@@ -798,9 +758,7 @@ class MainApp:
             return
         iid = tree.item(item)["values"][0]
         if messagebox.askyesno("Confirm", f"Delete income ID {iid}?"):
-            db = Database()
-            db.execute("DELETE FROM INCOME WHERE IncomeID=%s", (iid,))
-            db.close()
+            ie.delete_income(iid)
             self.show_income()
 
     # ── EXPENSE ──────────────────────────────────────────────────
@@ -819,9 +777,7 @@ class MainApp:
                       for a in accounts]
         self._acc_map_exp = {lbl: a["AccountID"] for lbl, a in zip(acc_labels, accounts)}
 
-        db = Database()
-        cats = db.fetchall("SELECT * FROM EXPENSECATEGORIES")
-        db.close()
+        cats = ie.get_categories()
         cat_names = [c["CategoryName"] for c in cats]
         self._cat_map = {c["CategoryName"]: c["CategoryID"] for c in cats}
 
@@ -890,16 +846,7 @@ class MainApp:
 
         tree.heading("No.", text="No.")
 
-        db = Database()
-        rows = db.fetchall(
-            "SELECT e.ExpenseID, b.BankName, c.CategoryName, e.Amount, "
-            "e.ExpenseDate, e.Description "
-            "FROM EXPENSES e "
-            "JOIN BANKACCOUNTS b ON e.AccountID = b.AccountID "
-            "JOIN EXPENSECATEGORIES c ON e.CategoryID = c.CategoryID "
-            "WHERE e.UserID=%s ORDER BY e.ExpenseDate DESC",
-            (self.user_id,))
-        db.close()
+        rows = ie.get_all_expenses(self.user_id)
 
         for idx, r in enumerate(rows, start=1):
             tree.insert("", "end", values=(
@@ -928,43 +875,29 @@ class MainApp:
             desc     = self.exp_desc.get().strip() or ""
             datetime.strptime(date_str, "%Y-%m-%d")
 
-            db = Database()
-            ok = db.fetchone(
-                "SELECT fn_sufficient_balance(%s, %s) AS ok",
-                (account_id, amount))["ok"]
-            db.close()
+            ok = ie.check_sufficient_balance(account_id, amount)
 
             if not ok:
-                db2 = Database()
-                bal = db2.fetchone(
-                    "SELECT Balance, BankName FROM BANKACCOUNTS WHERE AccountID=%s",
-                    (account_id,))
-                db2.close()
+                acc_info = ie.get_account_info(account_id)
                 ans = messagebox.askyesno(
                     "Insufficient balance",
-                    f"Account {bal['BankName']} has only {float(bal['Balance']):,.0f} VND.\n"
+                    f"Account {acc_info['BankName']} has only {float(acc_info['Balance']):,.0f} VND.\n"
                     f"Cannot spend {amount:,.0f} VND.\n\nDo you want to choose another account?"
                 )
                 if ans:
                     self.exp_acc.focus_set()
                 return
 
-            db3 = Database()
-            result = db3.call_procedure("sp_add_expense",
-                (self.user_id, account_id, cat_id, amount, date_str, desc))
-            db3.close()
+            success, msg = ie.add_expense(
+                self.user_id, account_id, cat_id, amount, desc, date_str)
 
-            if result and ("Insufficient" in str(result[0]) or "Error" in str(result[0])):
-                messagebox.showwarning("Warning", str(result[0]))
+            if not success:
+                messagebox.showwarning("Warning", msg)
             else:
-                db4 = Database()
-                new_bal = db4.fetchone(
-                    "SELECT Balance FROM BANKACCOUNTS WHERE AccountID=%s",
-                    (account_id,))["Balance"]
-                db4.close()
+                new_bal = ie.get_account_balance(account_id)
                 messagebox.showinfo(
                     "Success",
-                    f"✅ Added expense: {amount:,.0f} VND\nRemaining balance: {float(new_bal):,.0f} VND"
+                    f"✅ Added expense: {amount:,.0f} VND\nRemaining balance: {new_bal:,.0f} VND"
                 )
                 self.exp_amount.delete(0, "end")
                 self.exp_desc.delete(0, "end")
@@ -981,9 +914,7 @@ class MainApp:
             return
         eid = tree.item(item)["values"][0]
         if messagebox.askyesno("Confirm", f"Delete expense ID {eid}?"):
-            db = Database()
-            db.execute("DELETE FROM EXPENSES WHERE ExpenseID=%s", (eid,))
-            db.close()
+            ie.delete_expense(eid)
             self.show_expense()
 
     # ── ACCOUNTS ─────────────────────────────────────────────────
@@ -991,13 +922,8 @@ class MainApp:
         self._clear_content()
         self._page_title("Bank Accounts", "Manage your account balances")
 
-        db = Database()
-        rows = db.fetchall(
-            "SELECT AccountID, BankName, Balance "
-            "FROM BANKACCOUNTS WHERE UserID=%s ORDER BY AccountID",
-            (self.user_id,))
-        total = sum(float(r["Balance"]) for r in rows)
-        db.close()
+        rows = ie.get_user_accounts(self.user_id)
+        total = ie.get_total_balance(self.user_id)
 
         card = tk.Frame(self.content, bg=PRIMARY)
         card.pack(fill="x", padx=24, pady=(12, 8))
@@ -1089,19 +1015,9 @@ class MainApp:
                 w.destroy()
             m = int(month_var.get())
             y = int(year_var.get())
-            db = Database()
-            income  = float(db.fetchone(
-                "SELECT fn_total_income_by_user(%s,%s,%s) AS v",
-                (self.user_id, m, y))["v"] or 0)
-            expense = float(db.fetchone(
-                "SELECT fn_total_expense_by_user(%s,%s,%s) AS v",
-                (self.user_id, m, y))["v"] or 0)
-            status  = db.fetchone(
-                "SELECT fn_budget_status_by_user(%s,%s,%s) AS v",
-                (self.user_id, m, y))["v"] or "N/A"
-            db.close()
+            income, expense, saving = ie.get_monthly_summary(self.user_id, m, y)
+            status = ie.get_budget_status_by_user(self.user_id, m, y)
 
-            saving = income - expense
             cards = tk.Frame(rf, bg=BG)
             cards.pack(fill="x", padx=0, pady=8)
             self._card(cards, f"Total income {m}/{y}", f"{income:,.0f} VND", SUCCESS, "💵")
@@ -1139,16 +1055,7 @@ class MainApp:
                 w.destroy()
             m = int(month_var.get())
             y = int(year_var.get())
-            db = Database()
-            rows = db.fetchall(
-                "SELECT c.CategoryName, COUNT(e.ExpenseID) AS Cnt, "
-                "SUM(e.Amount) AS Total, AVG(e.Amount) AS Avg "
-                "FROM EXPENSES e "
-                "JOIN EXPENSECATEGORIES c ON e.CategoryID=c.CategoryID "
-                "WHERE e.UserID=%s AND MONTH(e.ExpenseDate)=%s AND YEAR(e.ExpenseDate)=%s "
-                "GROUP BY c.CategoryName ORDER BY Total DESC",
-                (self.user_id, m, y))
-            db.close()
+            rows = ie.get_category_spending_by_month(self.user_id, m, y)
 
             if not rows:
                 tk.Label(rf, text=f"No data for {m}/{y}",
@@ -1258,23 +1165,13 @@ class MainApp:
             w.destroy()
 
         cf = self._trend_chart_frame
-        db = Database()
 
         if mode == "1week":
             today    = date.today()
             week_ago = today - timedelta(days=6)
 
-            inc_rows = db.fetchall(
-                "SELECT DATE(IncomeDate) AS d, SUM(Amount) AS v "
-                "FROM INCOME WHERE UserID=%s AND IncomeDate >= %s "
-                "GROUP BY DATE(IncomeDate) ORDER BY d",
-                (self.user_id, str(week_ago)))
-            exp_rows = db.fetchall(
-                "SELECT DATE(ExpenseDate) AS d, SUM(Amount) AS v "
-                "FROM EXPENSES WHERE UserID=%s AND ExpenseDate >= %s "
-                "GROUP BY DATE(ExpenseDate) ORDER BY d",
-                (self.user_id, str(week_ago)))
-            db.close()
+            inc_rows = ie.get_daily_income(self.user_id, week_ago)
+            exp_rows = ie.get_daily_expense(self.user_id, week_ago)
 
             inc_map = {str(r["d"]): float(r["v"]) for r in inc_rows}
             exp_map = {str(r["d"]): float(r["v"]) for r in exp_rows}
@@ -1287,15 +1184,7 @@ class MainApp:
             use_bar  = True
         else:
             limit = {"3month": 3, "6month": 6, "12month": 12}[mode]
-            rows = db.fetchall(
-                "SELECT Month, Year, "
-                "SUM(TotalIncome) AS Inc, SUM(TotalExpense) AS Exp "
-                "FROM vw_monthly_summary_by_account "
-                "WHERE UserID=%s "
-                "GROUP BY Year, Month "
-                "ORDER BY Year DESC, Month DESC LIMIT %s",
-                (self.user_id, limit))
-            db.close()
+            rows = ie.get_monthly_trend_data(self.user_id, limit)
             rows     = list(reversed(rows))
             labels   = [f"{r['Month']}/{r['Year']}" for r in rows]
             inc_vals = [float(r["Inc"]) for r in rows]
@@ -1382,28 +1271,11 @@ class MainApp:
         tk.Label(f, text="Budget Alerts",
                  font=FONT_B, bg=BG, fg=TEXT).pack(anchor="w", padx=4, pady=(8, 4))
 
-        db = Database()
         m, y = date.today().month, date.today().year
 
-        low_bal = db.fetchall(
-            "SELECT BankName, Balance FROM BANKACCOUNTS "
-            "WHERE UserID=%s AND Balance < 1000000",
-            (self.user_id,))
-
-        deficit_months = db.fetchall(
-            "SELECT Month, Year, SUM(TotalIncome) AS Inc, SUM(TotalExpense) AS Exp "
-            "FROM vw_monthly_summary_by_account WHERE UserID=%s "
-            "GROUP BY Year, Month "
-            "HAVING Exp > Inc ORDER BY Year DESC, Month DESC LIMIT 6",
-            (self.user_id,))
-
-        top_cat = db.fetchall(
-            "SELECT c.CategoryName, SUM(e.Amount) AS Total "
-            "FROM EXPENSES e JOIN EXPENSECATEGORIES c ON e.CategoryID=c.CategoryID "
-            "WHERE e.UserID=%s AND MONTH(e.ExpenseDate)=%s AND YEAR(e.ExpenseDate)=%s "
-            "GROUP BY c.CategoryName ORDER BY Total DESC LIMIT 3",
-            (self.user_id, m, y))
-        db.close()
+        low_bal = ie.get_low_balance_accounts(self.user_id)
+        deficit_months = ie.get_deficit_months(self.user_id)
+        top_cat = ie.get_top_categories(self.user_id, m, y)
 
         section = tk.LabelFrame(f, text="⚠️ Low balance accounts (< 1,000,000 VND)",
                                  font=FONT_B, bg=BG, fg=WARNING, bd=1)
@@ -1446,20 +1318,8 @@ class MainApp:
         tk.Label(f, text="Account Balance History",
                  font=FONT_B, bg=BG, fg=TEXT).pack(anchor="w", padx=4, pady=(8, 4))
 
-        db = Database()
-        accounts = db.fetchall(
-            "SELECT AccountID, BankName, Balance FROM BANKACCOUNTS "
-            "WHERE UserID=%s", (self.user_id,))
-
-        rows = db.fetchall(
-            "SELECT 'income' AS type, AccountID, IncomeDate AS txDate, Amount "
-            "FROM INCOME WHERE UserID=%s "
-            "UNION ALL "
-            "SELECT 'expense', AccountID, ExpenseDate, Amount "
-            "FROM EXPENSES WHERE UserID=%s "
-            "ORDER BY txDate",
-            (self.user_id, self.user_id))
-        db.close()
+        accounts = ie.get_user_accounts(self.user_id)
+        rows = ie.get_transaction_history(self.user_id)
 
         tbl = tk.Frame(f, bg=CARD)
         tbl.pack(fill="x", padx=0, pady=6)
