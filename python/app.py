@@ -933,15 +933,37 @@ class MainApp:
                  font=("Segoe UI", 24, "bold"),
                  bg=PRIMARY, fg="white").pack(pady=(0, 12))
 
+        m, y = date.today().month, date.today().year
+
         for r in rows:
             f = tk.Frame(self.content, bg=CARD)
             f.pack(fill="x", padx=24, pady=4)
             tk.Label(f, text="🏦", font=("Segoe UI", 18),
                      bg=CARD).pack(side="left", padx=16, pady=12)
-            tk.Label(f, text=r["BankName"], font=FONT_B,
-                     bg=CARD, fg=TEXT).pack(side="left")
+
+            info = tk.Frame(f, bg=CARD)
+            info.pack(side="left", fill="x", expand=True)
+            tk.Label(info, text=r["BankName"], font=FONT_B,
+                     bg=CARD, fg=TEXT).pack(anchor="w")
+
+            # Budget status per account
+            status = ie.get_budget_status_by_account(r["AccountID"], m, y)
+            emoji = {"Surplus": "📈", "Deficit": "📉", "Balanced": "⚖️"}.get(status, "")
+            sc = SUCCESS if status == "Surplus" else (DANGER if status == "Deficit" else MUTED)
+            tk.Label(info, text=f"{emoji} {status} ({m}/{y})",
+                     font=("Segoe UI", 9), bg=CARD, fg=sc).pack(anchor="w")
+
+            # Edit balance button
+            acc_id = r["AccountID"]
+            tk.Button(f, text="✏️ Edit", font=("Segoe UI", 9),
+                      bg=BG, fg=TEXT, bd=1, relief="solid", cursor="hand2",
+                      padx=8,
+                      command=lambda aid=acc_id, name=r["BankName"],
+                                     bal=r["Balance"]: self._edit_balance(aid, name, bal)
+                      ).pack(side="right", padx=8, pady=12)
+
             tk.Label(f, text=f"{float(r['Balance']):,.0f} VND",
-                     font=FONT_B, bg=CARD, fg=SUCCESS).pack(side="right", padx=20)
+                     font=FONT_B, bg=CARD, fg=SUCCESS).pack(side="right", padx=12)
 
         tk.Button(self.content, text="+ Add Bank Account",
                   font=FONT_B, bg=PRIMARY, fg="white", bd=0,
@@ -950,6 +972,55 @@ class MainApp:
                       self.root, self.user_id,
                       on_done=self.show_accounts
                   )).pack(pady=16, ipady=8)
+
+    def _edit_balance(self, account_id, bank_name, current_balance):
+        """Dialog to edit account balance using sp_set_initial_balance"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Edit Balance — {bank_name}")
+        dialog.geometry("380x200")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        tk.Label(dialog, text=f"🏦 {bank_name}", font=FONT_B,
+                 bg=BG, fg=TEXT).pack(pady=(16, 4))
+        tk.Label(dialog, text=f"Current balance: {float(current_balance):,.0f} VND",
+                 font=FONT, bg=BG, fg=MUTED).pack()
+
+        tk.Label(dialog, text="New balance (VND):", font=FONT,
+                 bg=BG, fg=TEXT).pack(pady=(12, 4))
+        entry = tk.Entry(dialog, font=FONT, bd=1, relief="solid", width=20,
+                         justify="center")
+        entry.insert(0, str(int(float(current_balance))))
+        entry.pack(ipady=5)
+        entry.select_range(0, "end")
+        entry.focus_set()
+
+        def save():
+            try:
+                new_bal = float(entry.get().replace(",", ""))
+                if new_bal < 0:
+                    raise ValueError("Balance cannot be negative")
+                success, msg = ie.set_initial_balance(account_id, new_bal)
+                if success:
+                    messagebox.showinfo("Success",
+                        f"✅ Updated {bank_name}\nNew balance: {new_bal:,.0f} VND")
+                    dialog.destroy()
+                    self.show_accounts()
+                else:
+                    messagebox.showerror("Error", msg)
+            except ValueError as ve:
+                messagebox.showerror("Error", f"Invalid amount: {ve}")
+
+        btn_frame = tk.Frame(dialog, bg=BG)
+        btn_frame.pack(pady=12)
+        tk.Button(btn_frame, text="Cancel", font=FONT, bg=CARD, fg=TEXT,
+                  bd=1, relief="solid", padx=16, cursor="hand2",
+                  command=dialog.destroy).pack(side="left", padx=8, ipady=4)
+        tk.Button(btn_frame, text="Save", font=FONT_B, bg=PRIMARY, fg="white",
+                  bd=0, padx=20, cursor="hand2",
+                  command=save).pack(side="left", padx=8, ipady=4)
 
     # ── REPORTS ──────────────────────────────────────────────────
     def show_reports(self):
@@ -967,6 +1038,7 @@ class MainApp:
             ("Summary",        self._report_summary),
             ("By Category",    self._report_by_category),
             ("Trend",          self._report_trend),
+            ("Closure",        self._report_closure),
             ("Alerts",         self._report_alert),
             ("Balance History", self._report_balance_history),
         ]
@@ -1346,6 +1418,91 @@ class MainApp:
                   command=lambda: self._export_history_csv(rows, acc_map)
                   ).pack(anchor="e", padx=8, pady=6, ipady=5)
 
+    def _report_closure(self):
+        """Monthly closure report using sp_monthly_closure"""
+        f = self.report_content
+        bar, month_var, year_var = self._report_filter_bar(f)
+
+        # Account selector
+        accounts = ie.get_user_accounts(self.user_id)
+        acc_choices = ["All Accounts"] + [a["BankName"] for a in accounts]
+        acc_id_map = {"All Accounts": 0}
+        for a in accounts:
+            acc_id_map[a["BankName"]] = a["AccountID"]
+
+        tk.Label(bar, text="Account:", font=FONT,
+                 bg=BG, fg=TEXT).pack(side="left", padx=(12, 4))
+        acc_var = tk.StringVar(value="All Accounts")
+        ttk.Combobox(bar, textvariable=acc_var, values=acc_choices,
+                     width=18, state="readonly").pack(side="left")
+
+        result_frame = tk.Frame(f, bg=BG)
+        result_frame.pack(fill="both", expand=True)
+
+        def load(rf=result_frame):
+            for w in rf.winfo_children():
+                w.destroy()
+            m = int(month_var.get())
+            y = int(year_var.get())
+            aid = acc_id_map.get(acc_var.get(), 0)
+
+            data = ie.get_monthly_closure(self.user_id, m, y, aid)
+            if not data:
+                tk.Label(rf, text=f"No data for {m}/{y}",
+                         font=FONT, bg=BG, fg=MUTED).pack(pady=30)
+                return
+
+            inc = float(data.get('TotalIncome', 0))
+            exp = float(data.get('TotalExpense', 0))
+            net = float(data.get('NetCashFlow', 0))
+            closing = float(data.get('ClosingBalance', 0))
+            label = data.get('AccountInfo') or data.get('BankName', acc_var.get())
+
+            # Title
+            tk.Label(rf, text=f"📋 Monthly Closure — {label}",
+                     font=("Segoe UI", 13, "bold"),
+                     bg=BG, fg=TEXT).pack(anchor="w", padx=4, pady=(8, 12))
+
+            # Cards row
+            cards = tk.Frame(rf, bg=BG)
+            cards.pack(fill="x", padx=0, pady=4)
+            self._card(cards, "Total Income", f"{inc:,.0f} VND", SUCCESS, "💵")
+            self._card(cards, "Total Expense", f"{exp:,.0f} VND", DANGER, "💸")
+            net_color = SUCCESS if net >= 0 else DANGER
+            self._card(cards, "Net Cash Flow", f"{net:,.0f} VND", net_color, "📊")
+            self._card(cards, "Closing Balance", f"{closing:,.0f} VND", PRIMARY, "🏦")
+
+            # Detail table
+            tbl = tk.Frame(rf, bg=CARD)
+            tbl.pack(fill="x", padx=0, pady=12)
+            cols = ("Item", "Value")
+            tree = ttk.Treeview(tbl, columns=cols, show="headings", height=5)
+            tree.heading("Item", text="Item")
+            tree.heading("Value", text="Value (VND)")
+            tree.column("Item", width=250, anchor="w")
+            tree.column("Value", width=200, anchor="e")
+            items = [
+                ("Total Income", f"{inc:,.0f}"),
+                ("Total Expense", f"{exp:,.0f}"),
+                ("Net Cash Flow", f"{net:,.0f}"),
+                ("Closing Balance", f"{closing:,.0f}"),
+            ]
+            for item, val in items:
+                tree.insert("", "end", values=(item, val))
+            tree.pack(fill="x")
+
+            # Export
+            tk.Button(rf, text="⬇ Export CSV", font=FONT, bg=SUCCESS, fg="white",
+                      bd=0, cursor="hand2", padx=10,
+                      command=lambda: self._export_closure_csv(
+                          m, y, label, inc, exp, net, closing)
+                      ).pack(anchor="e", padx=8, pady=6, ipady=5)
+
+        tk.Button(bar, text="View", font=FONT_B, bg=PRIMARY, fg="white",
+                  bd=0, cursor="hand2", padx=10,
+                  command=load).pack(side="left", padx=12, ipady=4)
+        load()
+
     # ════════════════════════════════════════════════════════════════
     #  EXPORT FUNCTIONS (English)
     # ════════════════════════════════════════════════════════════════
@@ -1475,6 +1632,25 @@ class MainApp:
                     w.writerow([str(r["txDate"]), kind,
                                 acc_map.get(r["AccountID"], "?"),
                                 f"{prefix}{float(r['Amount']):,.0f}"])
+            messagebox.showinfo("Export CSV", f"File saved:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def _export_closure_csv(self, m, y, label, inc, exp, net, closing):
+        path = self._get_export_path(f"closure_{m}_{y}.csv")
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+                w = csv.writer(fh)
+                w.writerow(["Monthly Closure Report"])
+                w.writerow([f"Month {m}/{y} — {label}"])
+                w.writerow([])
+                w.writerow(["Item", "Value (VND)"])
+                w.writerow(["Total Income", f"{inc:,.0f}"])
+                w.writerow(["Total Expense", f"{exp:,.0f}"])
+                w.writerow(["Net Cash Flow", f"{net:,.0f}"])
+                w.writerow(["Closing Balance", f"{closing:,.0f}"])
             messagebox.showinfo("Export CSV", f"File saved:\n{path}")
         except Exception as e:
             messagebox.showerror("Error", str(e))

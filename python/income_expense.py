@@ -381,3 +381,80 @@ def get_daily_expense(user_id, start_date):
             (user_id, str(start_date)))
     finally:
         db.close()
+
+
+# ==================== SQL FUNCTION — Trạng thái theo tài khoản ====================
+def get_budget_status_by_account(account_id, month=None, year=None):
+    """Trạng thái ngân sách theo tài khoản — dùng fn_budget_status_by_account.
+    Trả về str: 'Surplus' | 'Deficit' | 'Balanced'"""
+    if month is None or year is None:
+        now = datetime.now()
+        month = month or now.month
+        year = year or now.year
+    db = Database()
+    try:
+        row = db.fetchone(
+            "SELECT fn_budget_status_by_account(%s, %s, %s) AS status",
+            (account_id, month, year))
+        return row['status'] if row and row['status'] else 'Balanced'
+    finally:
+        db.close()
+
+
+# ==================== STORED PROCEDURE — Cập nhật số dư ====================
+def set_initial_balance(account_id, new_balance):
+    """Cập nhật số dư tài khoản — dùng sp_set_initial_balance.
+    Trả về (success: bool, message: str)"""
+    db = Database()
+    try:
+        result = db.call_procedure("sp_set_initial_balance",
+                                   (account_id, new_balance))
+        if result and len(result) > 0:
+            msg = result[0][0] if isinstance(result[0], tuple) else result[0]
+            if isinstance(msg, dict):
+                msg = msg.get('Message', str(msg))
+            return True, str(msg)
+        return True, f"Đã cập nhật số dư tài khoản #{account_id}: {new_balance:,.0f} VND"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        db.close()
+
+
+# ==================== STORED PROCEDURE — Báo cáo chốt sổ tháng ====================
+def get_monthly_closure(user_id, month=None, year=None, account_id=0):
+    """Báo cáo chốt sổ tháng — dùng sp_monthly_closure.
+    account_id=0: tất cả tài khoản, >0: chỉ 1 tài khoản.
+    Trả về dict hoặc None"""
+    if month is None or year is None:
+        now = datetime.now()
+        month = month or now.month
+        year = year or now.year
+    db = Database()
+    try:
+        result = db.call_procedure("sp_monthly_closure",
+                                   (user_id, account_id, year, month))
+        if not result:
+            return None
+        row = result[0]
+        if isinstance(row, dict):
+            return row
+        # Tuple format from procedure
+        if account_id == 0:
+            return {
+                'UserID': row[0], 'Month': row[1], 'Year': row[2],
+                'AccountInfo': row[3], 'TotalIncome': row[4],
+                'TotalExpense': row[5], 'NetCashFlow': row[6],
+                'ClosingBalance': row[7]
+            }
+        else:
+            return {
+                'UserID': row[0], 'BankName': row[1], 'Month': row[2],
+                'Year': row[3], 'TotalIncome': row[4],
+                'TotalExpense': row[5], 'NetCashFlow': row[6],
+                'ClosingBalance': row[7]
+            }
+    except Exception as e:
+        return None
+    finally:
+        db.close()

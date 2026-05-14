@@ -34,7 +34,7 @@ graph TB
         APP["app.py<br/>(Tkinter GUI)"]
         LOGIN["LoginWindow"]
         REG["RegisterWindow"]
-        MAIN["MainApp"]
+        MAIN["MainApp<br/>Dashboard, Income, Expense,<br/>Accounts, Reports"]
         SETUP["SetupBankWindow"]
         DIALOG["AddBankDialog"]
         
@@ -46,16 +46,16 @@ graph TB
     end
 
     subgraph "⚙️ Business Logic Layer"
-        IE["income_expense.py"]
-        IE_INC["Thu nhập<br/>add / view / delete"]
-        IE_EXP["Chi tiêu<br/>add / view / delete"]
-        IE_RPT["Báo cáo<br/>balance / monthly"]
-        IE_CAT["Danh mục chi tiêu"]
+        IE["income_expense.py<br/>(24 hàm)"]
+        IE_ACC["Tài khoản<br/>get_user_accounts<br/>get_account_balance<br/>get_total_balance<br/>set_initial_balance"]
+        IE_INC["Thu nhập<br/>add / get_all / delete"]
+        IE_EXP["Chi tiêu<br/>add / get_all / delete<br/>check_sufficient_balance"]
+        IE_RPT["Báo cáo<br/>monthly_summary<br/>budget_status<br/>monthly_closure<br/>trend / alerts"]
         
+        IE --> IE_ACC
         IE --> IE_INC
         IE --> IE_EXP
         IE --> IE_RPT
-        IE --> IE_CAT
     end
 
     subgraph "🔌 Data Access Layer"
@@ -71,20 +71,24 @@ graph TB
         DB --> CFG
     end
 
-    subgraph "🗄️ Database Layer (MySQL)"
+    subgraph "🗄️ Database Layer - MySQL"
         TABLES["Tables:<br/>USERS, BANKACCOUNTS,<br/>INCOME, EXPENSES,<br/>EXPENSECATEGORIES"]
         PROCS["Procedures:<br/>sp_add_income<br/>sp_add_expense<br/>sp_set_initial_balance<br/>sp_monthly_closure"]
-        FUNCS["Functions:<br/>fn_income_by_account<br/>fn_expense_by_account<br/>fn_sufficient_balance<br/>fn_budget_status_*<br/>fn_total_income/expense_by_user"]
+        FUNCS["Functions:<br/>fn_income/expense_by_account<br/>fn_sufficient_balance<br/>fn_budget_status_by_account/user<br/>fn_total_income/expense_by_user"]
         TRIGS["Triggers:<br/>trg_after_income_insert<br/>trg_before_expense_insert<br/>trg_after_expense_insert<br/>trg_after_expense/income_delete"]
         VIEWS["Views:<br/>vw_monthly_summary_by_account<br/>vw_category_spending_by_account<br/>vw_user_total_balance<br/>vw_users_safe"]
         INDEXES["Indexes:<br/>idx_income_user/date/account<br/>idx_expenses_user/date/category/account<br/>idx_bankaccount_user"]
     end
 
-    APP --> IE
-    APP --> DB
+    MAIN -->|"import ie"| IE
+    LOGIN --> DB
+    REG --> DB
+    SETUP --> DB
+    DIALOG --> DB
     IE --> DB
     DB --> TABLES
     DB --> PROCS
+    DB --> FUNCS
     PROCS --> FUNCS
     PROCS --> TABLES
     TRIGS --> TABLES
@@ -167,17 +171,18 @@ flowchart TD
     DASHBOARD["🏠 Dashboard<br/>• Tổng thu/chi/tiết kiệm<br/>• Biểu đồ 6 tháng<br/>• Số dư hiện tại"]
     
     DASHBOARD <--> INCOME["💵 Income<br/>• Thêm thu nhập<br/>• Xem danh sách<br/>• Xóa thu nhập"]
-    DASHBOARD <--> EXPENSE["💸 Expense<br/>• Thêm chi tiêu<br/>• Xem danh sách<br/>• Xóa chi tiêu"]
-    DASHBOARD <--> ACCOUNTS["🏦 Accounts<br/>• Danh sách TK ngân hàng<br/>• Thêm TK mới<br/>• Xem số dư"]
-    DASHBOARD <--> REPORTS["📊 Reports<br/>• Báo cáo tháng<br/>• Biểu đồ chi tiêu<br/>• Xuất CSV"]
+    DASHBOARD <--> EXPENSE["💸 Expense<br/>• Thêm chi tiêu<br/>• Kiểm tra số dư<br/>• Xóa chi tiêu"]
+    DASHBOARD <--> ACCOUNTS["🏦 Accounts<br/>• Danh sách TK ngân hàng<br/>• Trạng thái ngân sách/TK<br/>• Chỉnh sửa số dư<br/>• Thêm TK mới"]
+    DASHBOARD <--> REPORTS["📊 Reports<br/>• Summary, Category, Trend<br/>• Closure - chốt sổ tháng<br/>• Alerts, Balance History<br/>• Xuất CSV/PDF"]
     
-    INCOME -->|"sp_add_income"| DB_LAYER[("MySQL Database")]
-    EXPENSE -->|"sp_add_expense"| DB_LAYER
-    ACCOUNTS --> DB_LAYER
-    REPORTS -->|"fn_total_*"| DB_LAYER
+    INCOME -->|"ie.add_income<br/>sp_add_income"| IE_LAYER["income_expense.py"]
+    EXPENSE -->|"ie.add_expense<br/>ie.check_sufficient_balance"| IE_LAYER
+    ACCOUNTS -->|"ie.set_initial_balance<br/>ie.get_budget_status_by_account"| IE_LAYER
+    REPORTS -->|"ie.get_monthly_closure<br/>ie.get_monthly_summary"| IE_LAYER
     
-    DB_LAYER -->|"Trigger cộng Balance"| DB_LAYER
-    DB_LAYER -->|"Trigger trừ Balance"| DB_LAYER
+    IE_LAYER -->|"database.py"| DB_LAYER[("MySQL Database")]
+    
+    DB_LAYER -->|"Trigger cộng/trừ Balance"| DB_LAYER
 ```
 
 ---
@@ -209,8 +214,8 @@ graph LR
 |------|---------|----------|
 | `config.py` | Cấu hình DB | Host, user, password, database name |
 | `database.py` | Data Access | Class `Database` với `execute()`, `fetchall()`, `fetchone()`, `call_procedure()`, `close()` |
-| `income_expense.py` | Business Logic | 10 hàm: quản lý thu nhập, chi tiêu, danh mục, báo cáo số dư & tháng |
-| `app.py` | GUI (1637 dòng) | 6 class Tkinter: `LoginWindow`, `RegisterWindow`, `SetupBankWindow`, `AddBankDialog`, `MainApp` + 5 trang (Dashboard, Income, Expense, Accounts, Reports) |
+| `income_expense.py` | Business Logic | **24 hàm**: quản lý tài khoản, thu nhập, chi tiêu, danh mục, báo cáo (summary, budget status, closure, trend, alerts), kiểm tra số dư |
+| `app.py` | GUI (~1670 dòng) | 6 class Tkinter + 5 trang (Dashboard, Income, Expense, Accounts, Reports) + 6 tab Reports (Summary, Category, Trend, **Closure**, Alerts, History) |
 | `structure&data.sql` | Schema + Seed | 5 bảng + 10 records mẫu mỗi bảng |
 | `advanced.sql` | Advanced DB | 8 Index, 3 View, 7 Function, 4 Procedure, 5 Trigger |
 | `admin&security.sql` | Security | 4 MySQL users, phân quyền RBAC, View ẩn thông tin nhạy cảm |

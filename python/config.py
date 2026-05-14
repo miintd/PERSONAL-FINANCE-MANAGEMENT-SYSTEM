@@ -1,7 +1,7 @@
 # config.py
 DB_CONFIG = {
     "host":     "localhost",
-    "user":     "root",
-    "password": "yourpassword",
+    "user":     "pf_app",
+    "password": "",
     "database": "personal_finance"
 }
