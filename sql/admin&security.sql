@@ -14,7 +14,7 @@ CREATE USER 'pf_readonly'@'localhost' IDENTIFIED BY 'Readonly@123456';
 
 
 -- Admin: toàn quyền trên database
-GRANT ALL PRIVILEGES ON personal_finance.* TO 'pf_admin'@'localhost';
+GRANT ALL PRIVILEGES ON personal_finance.* TO 'pf_admin'@'localhost' WITH GRANT OPTION;
 
 -- App user: đọc/ghi bảng + gọi procedure & function
 GRANT SELECT, INSERT, UPDATE, DELETE 
@@ -29,11 +29,21 @@ GRANT EXECUTE
 GRANT SELECT 
     ON personal_finance.* 
     TO 'pf_report'@'localhost';
+    
+-- Tạo view che giấu thông tin nhạy cảm (dành cho readonly)
+CREATE OR REPLACE VIEW vw_users_safe AS
+SELECT 
+    UserID,
+    UserName,
+    CONCAT(LEFT(Email, 3), '***@***.com') AS Email,
+    CONCAT('***', RIGHT(PhoneNumber, 3)) AS PhoneNumber
+FROM USERS;
 
--- Readonly user: chỉ xem 3 View, không thấy bảng gốc
-GRANT SELECT ON personal_finance.vw_monthly_summary  TO 'pf_readonly'@'localhost';
-GRANT SELECT ON personal_finance.vw_category_spending TO 'pf_readonly'@'localhost';
-GRANT SELECT ON personal_finance.vw_user_balance      TO 'pf_readonly'@'localhost';
+-- Readonly user: chỉ xem các view cụ thể
+GRANT SELECT ON personal_finance.vw_users_safe TO 'pf_readonly'@'localhost';
+GRANT SELECT ON personal_finance.vw_monthly_summary_by_account  TO 'pf_readonly'@'localhost';
+GRANT SELECT ON personal_finance.vw_category_spending_by_account TO 'pf_readonly'@'localhost';
+GRANT SELECT ON personal_finance.vw_user_total_balance      TO 'pf_readonly'@'localhost';
 
 -- Áp dụng thay đổi
 FLUSH PRIVILEGES;
@@ -45,22 +55,17 @@ SHOW GRANTS FOR 'pf_report'@'localhost';
 SHOW GRANTS FOR 'pf_readonly'@'localhost';
 
 
--- ================================ SECURITY ======================================
--- View che thông tin nhạy cảm
-CREATE VIEW vw_users_safe AS
-SELECT 
-    UserID,
-    UserName,
-    CONCAT(LEFT(Email, 3), '***@***.com')          AS Email,
-    CONCAT('***', RIGHT(PhoneNumber, 3))            AS PhoneNumber
-FROM USERS;
+-- ====================== OPTIMIZATION =============================
+-- Kiểm tra index đã tạo ở bước 4
+SHOW INDEX FROM INCOME;
+SHOW INDEX FROM EXPENSES;
+SHOW INDEX FROM BANKACCOUNTS;
 
--- Chỉ cho pf_readonly thấy view an toàn này
-GRANT SELECT ON personal_finance.vw_users_safe TO 'pf_readonly'@'localhost';
+-- Phân tích hiệu suất câu truy vấn (EXPLAIN)
+EXPLAIN SELECT * FROM EXPENSES WHERE UserID = 1;
+EXPLAIN SELECT * FROM INCOME  WHERE IncomeDate = '2025-01-05';
 
--- Thu hồi quyền xem bảng USERS gốc nếu đã cấp nhầm
-REVOKE SELECT ON personal_finance.USERS FROM 'pf_readonly'@'localhost';
-
-FLUSH PRIVILEGES;
-
-
+-- Xem trạng thái tổng quát của MySQL server
+SHOW STATUS LIKE 'Slow_queries';
+SHOW STATUS LIKE 'Uptime';
+SHOW VARIABLES LIKE 'slow_query_log';

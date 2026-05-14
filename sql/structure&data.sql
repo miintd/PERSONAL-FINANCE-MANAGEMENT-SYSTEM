@@ -132,16 +132,8 @@ INSERT INTO EXPENSES (UserID, CategoryID, AccountID, Amount, ExpenseDate, Descri
 (9, 9, 9, 7000000, '2025-01-14', 'Da Nang trip'),
 (10,10,10, 350000, '2025-01-15', 'Haircut & spa');
 
-DESCRIBE USERS;
-DESCRIBE INCOME;
-DESCRIBE EXPENSECATEGORIES;
-DESCRIBE EXPENSES;
-DESCRIBE BANKACCOUNTS;
 
 -- ============================================================
-DELETE FROM expenses WHERE UserID >= 11;
-DELETE FROM income WHERE UserID >= 11;
-DELETE FROM USERS WHERE UserID >= 11;
 --  USER 11 — Nguyen Minh Khoa  (lương cao, nhiều accounts)
 --  Password: 123456
 -- ──────────────────────────────────────────────────────────

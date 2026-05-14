@@ -1035,10 +1035,9 @@ class MainApp:
 
         self._report_tabs = {}
         tabs = [
-            ("Summary",        self._report_summary),
+            ("Monthly Closure", self._report_closure),
             ("By Category",    self._report_by_category),
             ("Trend",          self._report_trend),
-            ("Closure",        self._report_closure),
             ("Alerts",         self._report_alert),
             ("Balance History", self._report_balance_history),
         ]
@@ -1050,7 +1049,7 @@ class MainApp:
             btn.pack(side="left", padx=4)
             self._report_tabs[name] = btn
 
-        self._switch_report(self._report_summary, "Summary")
+        self._switch_report(self._report_by_category, "By Category")
 
     def _switch_report(self, fn, name):
         for n, btn in self._report_tabs.items():
@@ -1074,46 +1073,6 @@ class MainApp:
                      values=[str(y) for y in range(2022, date.today().year + 2)],
                      width=6, state="readonly").pack(side="left")
         return bar, month_var, year_var
-
-    def _report_summary(self):
-        f = self.report_content
-        bar, month_var, year_var = self._report_filter_bar(f)
-
-        result_frame = tk.Frame(f, bg=BG)
-        result_frame.pack(fill="both", expand=True)
-
-        def load(month_var=month_var, year_var=year_var, rf=result_frame):
-            for w in rf.winfo_children():
-                w.destroy()
-            m = int(month_var.get())
-            y = int(year_var.get())
-            income, expense, saving = ie.get_monthly_summary(self.user_id, m, y)
-            status = ie.get_budget_status_by_user(self.user_id, m, y)
-
-            cards = tk.Frame(rf, bg=BG)
-            cards.pack(fill="x", padx=0, pady=8)
-            self._card(cards, f"Total income {m}/{y}", f"{income:,.0f} VND", SUCCESS, "💵")
-            self._card(cards, f"Total expense {m}/{y}", f"{expense:,.0f} VND", DANGER, "💸")
-            color = SUCCESS if saving >= 0 else DANGER
-            self._card(cards, "Savings", f"{saving:,.0f} VND", color, "💰")
-            sc = SUCCESS if status == "Surplus" else (DANGER if status == "Deficit" else WARNING)
-            self._card(cards, "Status", status, sc, "📊")
-
-            ebf = tk.Frame(rf, bg=BG)
-            ebf.pack(anchor="e", padx=8, pady=4)
-            tk.Button(ebf, text="⬇ Export CSV", font=FONT, bg=SUCCESS, fg="white",
-                      bd=0, cursor="hand2", padx=10,
-                      command=lambda: self._export_summary_csv(m, y, income, expense, saving, status)
-                      ).pack(side="left", padx=4, ipady=5)
-            tk.Button(ebf, text="⬇ Export PDF", font=FONT, bg=DANGER, fg="white",
-                      bd=0, cursor="hand2", padx=10,
-                      command=lambda: self._export_summary_pdf(m, y, income, expense, saving, status)
-                      ).pack(side="left", padx=4, ipady=5)
-
-        tk.Button(bar, text="View", font=FONT_B, bg=PRIMARY, fg="white",
-                  bd=0, cursor="hand2", padx=10,
-                  command=load).pack(side="left", padx=12, ipady=4)
-        load()
 
     def _report_by_category(self):
         f = self.report_content
@@ -1463,6 +1422,9 @@ class MainApp:
                      font=("Segoe UI", 13, "bold"),
                      bg=BG, fg=TEXT).pack(anchor="w", padx=4, pady=(8, 12))
 
+            # Get budget status
+            status = ie.get_budget_status_by_user(self.user_id, m, y)
+            
             # Cards row
             cards = tk.Frame(rf, bg=BG)
             cards.pack(fill="x", padx=0, pady=4)
@@ -1471,6 +1433,8 @@ class MainApp:
             net_color = SUCCESS if net >= 0 else DANGER
             self._card(cards, "Net Cash Flow", f"{net:,.0f} VND", net_color, "📊")
             self._card(cards, "Closing Balance", f"{closing:,.0f} VND", PRIMARY, "🏦")
+            sc = SUCCESS if status == "Surplus" else (DANGER if status == "Deficit" else WARNING)
+            self._card(cards, "Status", status, sc, "📊")
 
             # Detail table
             tbl = tk.Frame(rf, bg=CARD)
@@ -1491,12 +1455,19 @@ class MainApp:
                 tree.insert("", "end", values=(item, val))
             tree.pack(fill="x")
 
-            # Export
-            tk.Button(rf, text="⬇ Export CSV", font=FONT, bg=SUCCESS, fg="white",
+            # Export buttons
+            ebf = tk.Frame(rf, bg=BG)
+            ebf.pack(anchor="e", padx=8, pady=6)
+            tk.Button(ebf, text="⬇ Export CSV", font=FONT, bg=SUCCESS, fg="white",
                       bd=0, cursor="hand2", padx=10,
                       command=lambda: self._export_closure_csv(
-                          m, y, label, inc, exp, net, closing)
-                      ).pack(anchor="e", padx=8, pady=6, ipady=5)
+                          m, y, label, inc, exp, net, closing, status)
+                      ).pack(side="left", padx=4, ipady=5)
+            tk.Button(ebf, text="⬇ Export PDF", font=FONT, bg=DANGER, fg="white",
+                      bd=0, cursor="hand2", padx=10,
+                      command=lambda: self._export_closure_pdf(
+                          m, y, label, inc, exp, net, closing, status)
+                      ).pack(side="left", padx=4, ipady=5)
 
         tk.Button(bar, text="View", font=FONT_B, bg=PRIMARY, fg="white",
                   bd=0, cursor="hand2", padx=10,
@@ -1532,9 +1503,9 @@ class MainApp:
                 w.writerow([f"Month {m}/{y}"])
                 w.writerow([])
                 w.writerow(["Item", "Value (VND)"])
-                w.writerow(["Total Income", f"{income:,.0f}"])
-                w.writerow(["Total Expense", f"{expense:,.0f}"])
-                w.writerow(["Savings",     f"{saving:,.0f}"])
+                w.writerow(["Total Income", f"{income:.0f}"])
+                w.writerow(["Total Expense", f"{expense:.0f}"])
+                w.writerow(["Savings",     f"{saving:.0f}"])
                 w.writerow(["Status",      status])
             messagebox.showinfo("Export CSV", f"File saved:\n{path}")
         except Exception as e:
@@ -1596,8 +1567,8 @@ class MainApp:
                 w.writerow(["Category", "Transactions", "Total (VND)", "Avg/Tx (VND)"])
                 for r in rows:
                     w.writerow([r["CategoryName"], r["Cnt"],
-                                f"{float(r['Total']):,.0f}",
-                                f"{float(r['Avg']):,.0f}"])
+                                f"{float(r['Total']):.0f}",
+                                f"{float(r['Avg']):.0f}"])
             messagebox.showinfo("Export CSV", f"File saved:\n{path}")
         except Exception as e:
             messagebox.showerror("Error", str(e))
@@ -1613,7 +1584,7 @@ class MainApp:
                 w = csv.writer(fh)
                 w.writerow(["Period", "Income (VND)", "Expense (VND)", "Savings (VND)"])
                 for label, inc, exp, net in zip(labels, inc_vals, exp_vals, net_vals):
-                    w.writerow([label, f"{inc:,.0f}", f"{exp:,.0f}", f"{net:,.0f}"])
+                    w.writerow([label, f"{inc:.0f}", f"{exp:.0f}", f"{net:.0f}"])
             messagebox.showinfo("Export CSV", f"File saved:\n{path}")
         except Exception as e:
             messagebox.showerror("Error", str(e))
@@ -1631,12 +1602,12 @@ class MainApp:
                     prefix = "+" if r["type"] == "income" else "-"
                     w.writerow([str(r["txDate"]), kind,
                                 acc_map.get(r["AccountID"], "?"),
-                                f"{prefix}{float(r['Amount']):,.0f}"])
+                                f"{prefix}{float(r['Amount']):.0f}"])
             messagebox.showinfo("Export CSV", f"File saved:\n{path}")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
-    def _export_closure_csv(self, m, y, label, inc, exp, net, closing):
+    def _export_closure_csv(self, m, y, label, inc, exp, net, closing, status):
         path = self._get_export_path(f"closure_{m}_{y}.csv")
         if not path:
             return
@@ -1647,11 +1618,54 @@ class MainApp:
                 w.writerow([f"Month {m}/{y} — {label}"])
                 w.writerow([])
                 w.writerow(["Item", "Value (VND)"])
-                w.writerow(["Total Income", f"{inc:,.0f}"])
-                w.writerow(["Total Expense", f"{exp:,.0f}"])
-                w.writerow(["Net Cash Flow", f"{net:,.0f}"])
-                w.writerow(["Closing Balance", f"{closing:,.0f}"])
+                w.writerow(["Total Income", f"{inc:.0f}"])
+                w.writerow(["Total Expense", f"{exp:.0f}"])
+                w.writerow(["Net Cash Flow", f"{net:.0f}"])
+                w.writerow(["Closing Balance", f"{closing:.0f}"])
+                w.writerow(["Status", status])
             messagebox.showinfo("Export CSV", f"File saved:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def _export_closure_pdf(self, m, y, label, inc, exp, net, closing, status):
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+            from reportlab.lib import colors
+            from reportlab.lib.styles import getSampleStyleSheet
+
+            path = self._get_export_path(f"closure_{m}_{y}.pdf")
+            if not path:
+                return
+            doc  = SimpleDocTemplate(path, pagesize=A4)
+            styles = getSampleStyleSheet()
+            story = []
+            story.append(Paragraph(f"Monthly Closure Report — Month {m}/{y} — {label}",
+                                   styles["Title"]))
+            story.append(Spacer(1, 12))
+            data = [
+                ["Item", "Value (VND)"],
+                ["Total Income", f"{inc:,.0f}"],
+                ["Total Expense", f"{exp:,.0f}"],
+                ["Net Cash Flow", f"{net:,.0f}"],
+                ["Closing Balance", f"{closing:,.0f}"],
+                ["Status", status],
+            ]
+            t = Table(data, colWidths=[250, 200])
+            t.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F8EF7")),
+                ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+                ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                 [colors.white, colors.HexColor("#F0F4F8")]),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+            ]))
+            story.append(t)
+            doc.build(story)
+            messagebox.showinfo("Export PDF", f"File saved:\n{path}")
+        except ImportError:
+            messagebox.showerror("Error", "reportlab is required for PDF export. Install it with: pip install reportlab")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
